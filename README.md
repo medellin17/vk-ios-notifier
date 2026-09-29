@@ -94,7 +94,7 @@ playwright install-deps chromium
 Запустите скрипт авторизации:
 
 ```bash
-python3 qr_auth.py
+python3 src/qr_auth.py
 ```
 
 1. Скрипт запустит браузер и сохранит изображение QR-кода в `qr.png`.
@@ -110,7 +110,7 @@ python3 qr_auth.py
 Запустите службу в консоли:
 
 ```bash
-python3 web_notifier.py
+python3 src/web_notifier.py
 ```
 
 Отправьте себе тестовое сообщение во ВКонтакте с другого аккаунта или попросите друга написать вам. На iPhone должен мгновенно прийти нативный Push-уведомление! Для остановки нажмите `Ctrl + C`.

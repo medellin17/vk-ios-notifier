@@ -7,15 +7,15 @@
 
 ## Команды
 - Установка зависимостей: `pip install -r requirements.txt && playwright install chromium`
-- Первичная авторизация (QR): `python3 qr_auth.py`
-- Ручной запуск мониторинга: `python3 web_notifier.py`
+- Первичная авторизация (QR): `python3 src/qr_auth.py`
+- Ручной запуск мониторинга: `python3 src/web_notifier.py`
 - Управление systemd: `systemctl status|restart|stop|start vk-notifier`
 - Просмотр логов сервиса: `journalctl -u vk-notifier -f`
 
 ## Структура
-- `web_notifier.py` — основной сервис мониторинга диалогов VK Web через Playwright и отправки push в Bark.
-- `qr_auth.py` — CLI-скрипт для генерации QR-кода и сохранения веб-сессии в `session.json`.
-- `inspect_chat.py` — вспомогательная утилита для проверки селекторов и DOM-элементов страницы сообщений.
+- `src/web_notifier.py` — основной сервис мониторинга диалогов VK Web через Playwright и отправки push в Bark.
+- `src/qr_auth.py` — CLI-скрипт для генерации QR-кода и сохранения веб-сессии в `session.json`.
+- `src/inspect_chat.py` — вспомогательная утилита для проверки селекторов и DOM-элементов страницы сообщений.
 - `vk-notifier.service.example` — шаблон unit-файла systemd для фоновой работы сервиса.
 - `.env.example` — шаблон конфигурации окружения (`BARK_KEY`).
 

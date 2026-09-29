@@ -6,7 +6,7 @@ import time
 import requests
 from playwright.sync_api import sync_playwright
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 CACHE_FILE = os.path.join(BASE_DIR, "seen_cache.json")

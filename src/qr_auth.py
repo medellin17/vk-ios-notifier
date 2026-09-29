@@ -3,7 +3,7 @@ import sys
 import time
 from playwright.sync_api import sync_playwright
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QR_IMG_LOCAL = os.path.join(BASE_DIR, "qr.png")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
