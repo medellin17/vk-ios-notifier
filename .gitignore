@@ -1,0 +1,58 @@
+# Secrets & credentials
+.env
+.env.*
+!.env.example
+session.json
+seen_cache.json
+vk_config.v2.json
+code.txt
+config.txt
+
+# Captcha, QR & debug screenshots
+*.png
+*.jpg
+*.jpeg
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Agent context & audits
+.context/

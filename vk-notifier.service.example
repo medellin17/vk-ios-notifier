@@ -1,0 +1,19 @@
+[Unit]
+Description=VK to iOS Push Notifier (Bark)
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# Replace /root/vk-ios-notifier with the actual directory where this repo is cloned
+WorkingDirectory=/root/vk-ios-notifier
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /root/vk-ios-notifier/web_notifier.py
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
