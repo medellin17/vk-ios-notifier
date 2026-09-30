@@ -175,26 +175,26 @@ def extract_state(page):
                 
                 let snippet = "";
                 
-                // Извлекаем текст из ConvoListItem__text с подстановкой alt для картинок-эмодзи
-                if (textEl) {
-                    let content = "";
-                    for (let node of textEl.childNodes) {
-                        if (node.nodeType === Node.TEXT_NODE) {
-                            content += node.textContent;
-                        } else if (node.nodeType === Node.ELEMENT_NODE) {
-                            if (node.tagName === "IMG" && node.getAttribute("alt")) {
-                                content += node.getAttribute("alt");
+                function getFullTextWithEmoji(root) {
+                    if (!root) return "";
+                    let out = "";
+                    for (let child of root.childNodes) {
+                        if (child.nodeType === Node.TEXT_NODE) {
+                            out += child.textContent;
+                        } else if (child.nodeType === Node.ELEMENT_NODE) {
+                            if (child.tagName === "IMG" && child.getAttribute("alt")) {
+                                out += child.getAttribute("alt");
                             } else {
-                                const innerImgs = node.querySelectorAll("img[alt]");
-                                if (innerImgs.length > 0) {
-                                    innerImgs.forEach(im => { content += (im.getAttribute("alt") || ""); });
-                                } else {
-                                    content += node.innerText || "";
-                                }
+                                out += getFullTextWithEmoji(child);
                             }
                         }
                     }
-                    snippet = content.trim();
+                    return out;
+                }
+
+                // Извлекаем полный текст из ConvoListItem__text с сохранением текста и эмодзи
+                if (textEl) {
+                    snippet = getFullTextWithEmoji(textEl).trim();
                 }
                 
                 // Если текст пуст (например, одиночный эмодзи), проверяем title у ConvoListItem__message (title="👌🏻")
