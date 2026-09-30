@@ -307,10 +307,11 @@ def run_messenger_listener():
         # Хранилище последних сообщений по ID диалога или автору: {key: snippet}
         # Загружаем постоянный кэш с диска для защиты от ложных пушей при рестартах
         seen_dialogs = load_seen_cache()
+        # При старте актуализируем все текущие диалоги как базовое состояние,
+        # чтобы на ребуте ни в коем случае не прилетали старые сообщения
         for d in initial_state["convos"]:
             key = d["peerId"] if d["peerId"] else d["author"]
-            if key not in seen_dialogs:
-                seen_dialogs[key] = d["snippet"]
+            seen_dialogs[key] = d["snippet"]
         save_seen_cache(seen_dialogs)
 
         # Хранилище таймштампов последней отправки статуса 'печатает': {key: timestamp}
