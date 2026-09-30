@@ -29,10 +29,14 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
             locale="ru-RU",
             viewport={"width": 1280, "height": 800}
         )
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'platform', { get: () => 'Linux x86_64' });
+        """)
         page = context.new_page()
 
         print("[2/4] Загрузка страницы входа VK...")
@@ -75,14 +79,18 @@ def main():
         start = time.time()
         success = False
         last_screenshot = time.time()
+        artifact_dir = "/root/.gemini/antigravity-cli/brain/bfc3a30b-4aec-4493-a4f3-bddde95ec583"
 
-        while time.time() - start < 120:
+        while time.time() - start < 300:
             time.sleep(1.5)
             handle_challenge(page)
 
             if time.time() - last_screenshot > 2.5:
                 try:
                     page.screenshot(path=QR_IMG_LOCAL)
+                    if os.path.isdir(artifact_dir):
+                        import shutil
+                        shutil.copy2(QR_IMG_LOCAL, os.path.join(artifact_dir, "qr.png"))
                     last_screenshot = time.time()
                 except Exception:
                     pass
