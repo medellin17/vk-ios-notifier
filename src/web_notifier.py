@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import time
+from difflib import SequenceMatcher
 import requests
 from playwright.sync_api import sync_playwright
 
@@ -80,6 +81,31 @@ def handle_challenge(page):
         pass
 
 TYPING_COOLDOWN_SEC = 180  # Максимум 1 пуш о наборе текста раз в 3 минуты на диалог
+EDIT_SUPPRESSION_WINDOW_SEC = 25  # Окно подавления быстрых правок опечаток (сек)
+EDIT_SIMILARITY_THRESHOLD = 0.80  # Порог сходства текстов для распознавания опечатки
+
+def normalize_snippet(text: str) -> str:
+    """
+    Нормализует сниппет сообщения для устранения дребезга разметки VK.
+    VK в веб-клиенте периодически оборачивает тип вложения в квадратные скобки ([Файл] <-> Файл).
+    """
+    if not text:
+        return ""
+    clean = re.sub(r"\s+", " ", text.replace("\u00a0", " ")).strip()
+    return re.sub(
+        r"\[(Файл|Фотография|Стикер|Голосовое сообщение|Видеозапись|Аудиозапись|Запись на стене|Вложение[^\]]*)\]",
+        r"\1",
+        clean,
+        flags=re.IGNORECASE
+    )
+
+def is_minor_edit(old_text: str, new_text: str) -> bool:
+    """Определяет, является ли изменение текста исправлением опечатки."""
+    if not old_text or not new_text:
+        return False
+    if old_text == new_text:
+        return True
+    return SequenceMatcher(None, old_text, new_text).ratio() >= EDIT_SIMILARITY_THRESHOLD
 
 def is_typing_status(text: str) -> bool:
     """Проверяет, показывает ли диалог статус набора текста."""
@@ -283,6 +309,8 @@ def run_messenger_listener():
 
         # Хранилище таймштампов последней отправки статуса 'печатает': {key: timestamp}
         last_typing_time = {}
+        # Хранилище времени последнего отправленного пуша по входящему сообщению: {key: timestamp}
+        last_incoming_push_time = {}
 
         print(f"[{time.strftime('%X')}] Текущее состояние: непрочитанных ЛС = {last_msg_count}, уведомлений = {last_bell_count}")
         print(f"[{time.strftime('%X')}] Актуальные верхние диалоги ({len(seen_dialogs)}):")
@@ -324,17 +352,33 @@ def run_messenger_listener():
                 if is_ignored_snippet(snippet):
                     continue
 
-                # 1.3 Реальные входящие сообщения
+                # 1.3 Реальные входящие сообщения с дедупликацией разметки и правок
+                norm_snippet = normalize_snippet(snippet)
+                old_raw = seen_dialogs.get(key, "")
+                old_norm = normalize_snippet(old_raw)
+
                 if key not in seen_dialogs:
                     seen_dialogs[key] = snippet
                     save_seen_cache(seen_dialogs)
+                    last_incoming_push_time[key] = now
                     print(f"[{time.strftime('%X')}] [НОВОЕ ЛС] Новый диалог: {author} -> {snippet}")
                     send_bark_push(f"VK: {author}", snippet)
-                elif seen_dialogs[key] != snippet:
+                elif old_norm != norm_snippet:
+                    time_since_push = now - last_incoming_push_time.get(key, 0)
+                    if time_since_push < EDIT_SUPPRESSION_WINDOW_SEC and is_minor_edit(old_norm, norm_snippet):
+                        seen_dialogs[key] = snippet
+                        save_seen_cache(seen_dialogs)
+                        print(f"[{time.strftime('%X')}] [ПРАВКА ОПЕЧАТКИ] {author} исправил сообщение: \"{snippet}\" (пуш подавлен)")
+                    else:
+                        seen_dialogs[key] = snippet
+                        save_seen_cache(seen_dialogs)
+                        last_incoming_push_time[key] = now
+                        print(f"[{time.strftime('%X')}] [НОВОЕ ЛС] {author} -> {snippet}")
+                        send_bark_push(f"VK: {author}", snippet)
+                elif old_raw != snippet:
+                    # Текст после нормализации идентичен (например, дребезг [Файл] <-> Файл)
                     seen_dialogs[key] = snippet
                     save_seen_cache(seen_dialogs)
-                    print(f"[{time.strftime('%X')}] [НОВОЕ ЛС] {author} -> {snippet}")
-                    send_bark_push(f"VK: {author}", snippet)
 
             # 2. Проверяем рост общего счетчика непрочитанных ЛС (страховка)
             if current_msg_count > last_msg_count:
