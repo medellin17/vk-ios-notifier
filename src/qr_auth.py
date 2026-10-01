@@ -2,22 +2,29 @@ import os
 import sys
 import time
 from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QR_IMG_LOCAL = os.path.join(BASE_DIR, "qr.png")
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 CODE_FILE = os.path.join(BASE_DIR, "code.txt")
+CHROME_BIN = "/root/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome"
 
 def handle_challenge(page):
     """Безопасно прокликивает 'Продолжить', обрабатывая навигации страниц."""
     for attempt in range(1, 20):
         try:
-            btn = page.query_selector('button:has-text("Продолжить"), div[role="button"]:has-text("Продолжить")')
-            if btn and btn.is_visible():
-                print(f"[Challenge {attempt}] Клик по 'Продолжить'...")
-                btn.click()
-                time.sleep(2.5)
+            if "challenge" in page.url or "mincyfry-cert" in page.url or "робот" in page.title():
+                page.evaluate("""() => {
+                    const el = document.getElementsByClassName("start")[0];
+                    if (el) el.click();
+                }""")
+                btn = page.query_selector('button:has-text("Продолжить"), div[role="button"]:has-text("Продолжить"), .start')
+                if btn and btn.is_visible():
+                    print(f"[Challenge {attempt}] Клик по 'Продолжить'...")
+                    btn.click()
+                time.sleep(3)
             else:
                 break
         except Exception:
@@ -25,23 +32,33 @@ def handle_challenge(page):
             continue
 
 def main():
-    print("[1/4] Запуск браузера...")
+    print("[1/4] Запуск Google Chrome (Stealth)...")
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        executable_path = CHROME_BIN if os.path.isfile(CHROME_BIN) else None
+        browser = p.chromium.launch(
+            executable_path=executable_path,
+            headless=True,
+            args=[
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--window-size=1280,800",
+                "--ignore-certificate-errors",
+            ]
+        )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
             locale="ru-RU",
             viewport={"width": 1280, "height": 800}
         )
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'platform', { get: () => 'Linux x86_64' });
-        """)
         page = context.new_page()
+        Stealth().apply_stealth_sync(page)
 
         print("[2/4] Загрузка страницы входа VK...")
         try:
-            page.goto("https://vk.com/", wait_until="domcontentloaded")
+            page.goto("https://vk.ru/", wait_until="domcontentloaded")
         except Exception:
             pass
         time.sleep(2)

@@ -2,7 +2,7 @@
 
 ## Стек
 - Язык: Python 3.10+ — `requirements.txt`
-- Браузерная автоматизация: Playwright (Chromium headless)
+- Браузерная автоматизация: Playwright (Google Chrome `--headless=new` + `playwright-stealth`)
 - Сеть / Пуши: Requests (HTTP API сервиса Bark)
 
 ## Команды
