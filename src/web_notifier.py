@@ -83,6 +83,24 @@ def handle_challenge(page):
 TYPING_COOLDOWN_SEC = 180  # Максимум 1 пуш о наборе текста раз в 3 минуты на диалог
 EDIT_SUPPRESSION_WINDOW_SEC = 25  # Окно подавления быстрых правок опечаток (сек)
 EDIT_SIMILARITY_THRESHOLD = 0.80  # Порог сходства текстов для распознавания опечатки
+POLL_INTERVAL_MS = 1200  # Интервал проверки мессенджера (мс) — ускоренная доставка
+
+def clean_duplicate_author(text: str) -> str:
+    """
+    Устраняет дублирование авторов реплик в беседах.
+    VK рендерит одновременно краткий тег и доступный полный:
+    'Анжелика Б: Анжелика Бородина: ...' -> 'Анжелика Бородина: ...'
+    'Лина M: Лина M: ...' -> 'Лина M: ...'
+    'Вы: Вы: ...' -> 'Вы: ...'
+    """
+    if not text:
+        return ""
+    text = text.replace("\u00a0", " ")
+    # 1. 'Имя И: Имя Фамилия: ...' -> 'Имя Фамилия: ...'
+    s = re.sub(r"^([^\s:]{1,30})\s+[^\s:]{1,3}\.?:\s*(\1\s+[^:\n]{1,35}):\s*", r"\2: ", text)
+    # 2. 'Лина M: Лина M: ...' -> 'Лина M: ...', 'Вы: Вы: ...' -> 'Вы: ...'
+    s = re.sub(r"^([^:\n]{1,40}):\s*\1:\s*", r"\1: ", s)
+    return s.strip()
 
 def normalize_snippet(text: str) -> str:
     """
@@ -91,7 +109,8 @@ def normalize_snippet(text: str) -> str:
     """
     if not text:
         return ""
-    clean = re.sub(r"\s+", " ", text.replace("\u00a0", " ")).strip()
+    clean = clean_duplicate_author(text)
+    clean = re.sub(r"\s+", " ", clean.replace("\u00a0", " ")).strip()
     return re.sub(
         r"\[(Файл|Фотография|Стикер|Голосовое сообщение|Видеозапись|Аудиозапись|Запись на стене|Вложение[^\]]*)\]",
         r"\1",
@@ -311,7 +330,7 @@ def run_messenger_listener():
         # чтобы на ребуте ни в коем случае не прилетали старые сообщения
         for d in initial_state["convos"]:
             key = d["peerId"] if d["peerId"] else d["author"]
-            seen_dialogs[key] = d["snippet"]
+            seen_dialogs[key] = clean_duplicate_author(d["snippet"])
         save_seen_cache(seen_dialogs)
 
         # Хранилище таймштампов последней отправки статуса 'печатает': {key: timestamp}
@@ -322,11 +341,11 @@ def run_messenger_listener():
         print(f"[{time.strftime('%X')}] Текущее состояние: непрочитанных ЛС = {last_msg_count}, уведомлений = {last_bell_count}")
         print(f"[{time.strftime('%X')}] Актуальные верхние диалоги ({len(seen_dialogs)}):")
         for d in initial_state["convos"][:4]:
-            print(f"  - {d['author']}: {d['snippet'][:50]}")
+            print(f"  - {d['author']}: {clean_duplicate_author(d['snippet'])[:50]}")
 
         # Основной цикл отслеживания
         while True:
-            page.wait_for_timeout(2500)
+            page.wait_for_timeout(POLL_INTERVAL_MS)
             
             # Проверяем, не вылетел ли challenge
             if "challenge.html" in page.url or "mincyfry-cert" in page.url:
@@ -345,7 +364,7 @@ def run_messenger_listener():
             for c in current_convos:
                 key = c["peerId"] if c["peerId"] else c["author"]
                 author = c["author"]
-                snippet = c["snippet"]
+                snippet = clean_duplicate_author(c["snippet"])
 
                 # 1.1 Обработка статуса 'печатает' с ограничением по частоте (кулдаун)
                 if is_typing_status(snippet):
