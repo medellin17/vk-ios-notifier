@@ -4,7 +4,6 @@ import random
 import re
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 import requests
 from playwright.sync_api import sync_playwright
@@ -49,10 +48,8 @@ if not BARK_KEY:
     print("[ОШИБКА] BARK_KEY не найден в .env")
     sys.exit(1)
 
-bark_session = requests.Session()
-bark_executor = ThreadPoolExecutor(max_workers=2)
-
-def _do_send_bark(title: str, text: str, url: str):
+def send_bark_push(title: str, text: str, url: str = "https://vk.ru/im"):
+    """Отправляет push-уведомление в Bark на iPhone."""
     api_url = f"https://api.day.app/{BARK_KEY}/"
     payload = {
         "title": title,
@@ -60,19 +57,14 @@ def _do_send_bark(title: str, text: str, url: str):
         "group": "VK",
         "icon": "https://vk.com/images/svg_icons/ic_head_logo.svg",
         "url": url,
-        "sound": "calypso",
-        "level": "timeSensitive"
+        "sound": "calypso"
     }
     try:
-        res = bark_session.post(api_url, json=payload, timeout=5)
+        res = requests.post(api_url, json=payload, timeout=5)
         res.raise_for_status()
         print(f"[{time.strftime('%X')}] 🔔 Пуш отправлен в Bark: {title} | {text}")
     except Exception as e:
         print(f"[{time.strftime('%X')}] [!] Ошибка отправки в Bark: {e}")
-
-def send_bark_push(title: str, text: str, url: str = "https://vk.ru/im"):
-    """Отправляет push-уведомление в Bark на iPhone асинхронно через постоянное keep-alive соединение."""
-    bark_executor.submit(_do_send_bark, title, text, url)
 
 def handle_challenge(page):
     """Прокликивает плашку 'Проверяем, что вы не робот' / сертификатов Минцифры."""
@@ -112,7 +104,7 @@ def simulate_user_activity(page):
 TYPING_COOLDOWN_SEC = 180  # Максимум 1 пуш о наборе текста раз в 3 минуты на диалог
 EDIT_SUPPRESSION_WINDOW_SEC = 25  # Окно подавления быстрых правок опечаток (сек)
 EDIT_SIMILARITY_THRESHOLD = 0.80  # Порог сходства текстов для распознавания опечатки
-POLL_INTERVAL_MS = 600  # Интервал проверки мессенджера (мс) — ускоренная доставка
+POLL_INTERVAL_MS = 1200  # Интервал проверки мессенджера (мс) — ускоренная доставка
 
 def clean_duplicate_author(text: str) -> str:
     """
