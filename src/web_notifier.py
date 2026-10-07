@@ -7,9 +7,15 @@ import time
 from difflib import SequenceMatcher
 import requests
 from playwright.sync_api import sync_playwright
-from src.stealth_browser import create_stealth_browser_and_context
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+try:
+    from src.stealth_browser import create_stealth_browser_and_context
+except ModuleNotFoundError:
+    from stealth_browser import create_stealth_browser_and_context
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 CACHE_FILE = os.path.join(BASE_DIR, "seen_cache.json")
