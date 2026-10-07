@@ -7,7 +7,7 @@ import time
 from difflib import SequenceMatcher
 import requests
 from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
+from src.stealth_browser import create_stealth_browser_and_context
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SESSION_FILE = os.path.join(BASE_DIR, "session.json")
@@ -87,17 +87,27 @@ def handle_challenge(page):
     except Exception:
         pass
 
-def simulate_user_activity(page):
-    """Имитирует естественные движения курсора и микро-скролл для обхода поведенческого скоринга."""
+def setup_dom_observer(page):
+    """Устанавливает в браузере нативный MutationObserver для отслеживания изменений в чатах."""
     try:
-        x = random.randint(250, 750)
-        y = random.randint(150, 550)
-        page.mouse.move(x, y, steps=random.randint(4, 8))
-        if random.random() < 0.25:
-            delta = random.choice([30, -30, 50, -50])
-            page.mouse.wheel(0, delta)
-            page.wait_for_timeout(150)
-            page.mouse.wheel(0, -delta)
+        page.evaluate("""() => {
+            if (window.__vk_observer_installed) return;
+            window.__vk_observer_installed = true;
+            window.__vk_dom_dirty = true;
+            
+            const markDirty = () => { window.__vk_dom_dirty = true; };
+            const observer = new MutationObserver(markDirty);
+            
+            const target = document.querySelector("#im_dialogs") || document.querySelector("main") || document.body;
+            if (target) {
+                observer.observe(target, { childList: true, subtree: true, characterData: true });
+            }
+            
+            const sideBar = document.querySelector("#side_bar") || document.querySelector("#l_msg");
+            if (sideBar) {
+                observer.observe(sideBar, { childList: true, subtree: true, characterData: true });
+            }
+        }""")
     except Exception:
         pass
 
@@ -269,30 +279,10 @@ def extract_state(page):
         return {"msgCount": 0, "bellCount": 0, "convos": []}
 
 def run_messenger_listener():
-    print(f"[{time.strftime('%X')}] [1/3] Запуск Google Chrome (Stealth / --headless=new)...")
+    print(f"[{time.strftime('%X')}] [1/3] Запуск Google Chrome (Stealth / Windows / NVIDIA)...")
     with sync_playwright() as p:
-        executable_path = CHROME_BIN if os.path.isfile(CHROME_BIN) else None
-        browser = p.chromium.launch(
-            executable_path=executable_path,
-            headless=True,
-            args=[
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--window-size=1280,800",
-                "--ignore-certificate-errors",
-            ]
-        )
-        context = browser.new_context(
-            storage_state=SESSION_FILE,
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            locale="ru-RU",
-            viewport={"width": 1280, "height": 800}
-        )
+        browser, context = create_stealth_browser_and_context(p, storage_state=SESSION_FILE)
         page = context.new_page()
-        Stealth().apply_stealth_sync(page)
 
         print(f"[{time.strftime('%X')}] [2/3] Открытие https://vk.ru/im...")
         page.goto("https://vk.ru/im")
@@ -313,6 +303,9 @@ def run_messenger_listener():
 
         print(f"[{time.strftime('%X')}] [3/3] Мессенджер загружен! Инициализация слушателя...")
 
+        # Устанавливаем браузерный MutationObserver
+        setup_dom_observer(page)
+
         # Снимаем исходное состояние
         initial_state = extract_state(page)
         # Если вдруг список еще не отрендерился, ждем еще 3 сек
@@ -323,10 +316,7 @@ def run_messenger_listener():
         last_bell_count = initial_state["bellCount"]
         
         # Хранилище последних сообщений по ID диалога или автору: {key: snippet}
-        # Загружаем постоянный кэш с диска для защиты от ложных пушей при рестартах
         seen_dialogs = load_seen_cache()
-        # При старте актуализируем все текущие диалоги как базовое состояние,
-        # чтобы на ребуте ни в коем случае не прилетали старые сообщения
         for d in initial_state["convos"]:
             key = d["peerId"] if d["peerId"] else d["author"]
             seen_dialogs[key] = clean_duplicate_author(d["snippet"])
@@ -336,9 +326,9 @@ def run_messenger_listener():
         last_typing_time = {}
         # Хранилище времени последнего отправленного пуша по входящему сообщению: {key: timestamp}
         last_incoming_push_time = {}
-        # Хранилище времени последней имитации активности пользователя
-        last_activity_time = time.time()
-        ACTIVITY_INTERVAL_SEC = 120  # Имитация активности раз в 2 минуты
+        # Время последнего снятия состояния для страховочного heartbeat
+        last_state_extract_time = time.time()
+        FORCE_EXTRACT_INTERVAL_SEC = 10  # Страховочный опрос раз в 10 секунд
 
         print(f"[{time.strftime('%X')}] Текущее состояние: непрочитанных ЛС = {last_msg_count}, уведомлений = {last_bell_count}")
         print(f"[{time.strftime('%X')}] Актуальные верхние диалоги ({len(seen_dialogs)}):")
@@ -349,23 +339,39 @@ def run_messenger_listener():
         while True:
             page.wait_for_timeout(POLL_INTERVAL_MS)
             
-            # Проверяем, не вылетел ли challenge
-            if "challenge.html" in page.url or "mincyfry-cert" in page.url:
+            # 1. Проверяем, не перенаправило ли на блокировку/разморозку
+            current_url = page.url
+            if "blocked" in current_url or "id.vk.com/blocked" in current_url:
+                print(f"[{time.strftime('%X')}] [КРИТИЧНО] Обнаружена страница блокировки VK: {current_url}")
+                send_bark_push("VK: Внимание!", "Страница VK заморожена или требует проверки!", current_url)
+                time.sleep(60)
+                continue
+
+            # 2. Проверяем, не вылетел ли challenge
+            if "challenge.html" in current_url or "mincyfry-cert" in current_url:
                 handle_challenge(page)
                 page.wait_for_timeout(2000)
                 continue
 
+            # Поддерживаем активность observer при перерисовках интерфейса
+            setup_dom_observer(page)
+            now = time.time()
+
+            # 3. Быстрая проверка изменений через MutationObserver
+            try:
+                is_dirty = page.evaluate("() => { const d = window.__vk_dom_dirty; window.__vk_dom_dirty = false; return d; }")
+            except Exception:
+                is_dirty = True
+
+            # Если изменений не было и не пришло время контрольного heartbeat — спим дальше
+            if not is_dirty and (now - last_state_extract_time < FORCE_EXTRACT_INTERVAL_SEC):
+                continue
+
+            last_state_extract_time = now
             state = extract_state(page)
             current_msg_count = state["msgCount"]
             current_bell_count = state["bellCount"]
             current_convos = state["convos"]
-
-            now = time.time()
-
-            # Фоновая естественная активность (движение курсора, микро-скролл)
-            if now - last_activity_time >= ACTIVITY_INTERVAL_SEC:
-                last_activity_time = now
-                simulate_user_activity(page)
 
             # 1. Проверяем новые сообщения и статус печати в диалогах
             for c in current_convos:

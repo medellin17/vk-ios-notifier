@@ -2,7 +2,7 @@ import os
 import sys
 import time
 from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
+from src.stealth_browser import create_stealth_browser_and_context
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QR_IMG_LOCAL = os.path.join(BASE_DIR, "qr.png")
@@ -13,18 +13,14 @@ CHROME_BIN = "/root/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome"
 
 def handle_challenge(page):
     """Безопасно прокликивает 'Продолжить', обрабатывая навигации страниц."""
-    for attempt in range(1, 20):
+    for attempt in range(1, 10):
         try:
             if "challenge" in page.url or "mincyfry-cert" in page.url or "робот" in page.title():
-                page.evaluate("""() => {
-                    const el = document.getElementsByClassName("start")[0];
-                    if (el) el.click();
-                }""")
-                btn = page.query_selector('button:has-text("Продолжить"), div[role="button"]:has-text("Продолжить"), .start')
-                if btn and btn.is_visible():
+                btn = page.query_selector('.start, button:has-text("Продолжить"), div[role="button"]:has-text("Продолжить")')
+                if btn:
                     print(f"[Challenge {attempt}] Клик по 'Продолжить'...")
                     btn.click()
-                time.sleep(3)
+                    page.wait_for_timeout(4000)
             else:
                 break
         except Exception:
@@ -32,33 +28,14 @@ def handle_challenge(page):
             continue
 
 def main():
-    print("[1/4] Запуск Google Chrome (Stealth)...")
+    print("[1/4] Запуск Google Chrome (Stealth / Windows / NVIDIA)...")
     with sync_playwright() as p:
-        executable_path = CHROME_BIN if os.path.isfile(CHROME_BIN) else None
-        browser = p.chromium.launch(
-            executable_path=executable_path,
-            headless=True,
-            args=[
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--window-size=1280,800",
-                "--ignore-certificate-errors",
-            ]
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            locale="ru-RU",
-            viewport={"width": 1280, "height": 800}
-        )
+        browser, context = create_stealth_browser_and_context(p)
         page = context.new_page()
-        Stealth().apply_stealth_sync(page)
 
         print("[2/4] Загрузка страницы входа VK...")
         try:
-            page.goto("https://vk.ru/", wait_until="domcontentloaded")
+            page.goto("https://vk.com/", wait_until="domcontentloaded")
         except Exception:
             pass
         time.sleep(2)
@@ -69,24 +46,30 @@ def main():
         handle_challenge(page)
 
         print("[3/4] Ожидание отрисовки QR-кода...")
-        for _ in range(20):
-            handle_challenge(page)
+        artifact_dir = os.environ.get("ANTIGRAVITY_ARTIFACT_DIR", "/root/.gemini/antigravity-cli/brain/4fefe173-f886-45ff-8a40-ba7d0061a7bf")
+
+        def take_qr_screenshot():
             try:
-                has_qr = page.evaluate("""() => {
-                    const media = document.querySelectorAll('svg, canvas, img');
-                    return media.length > 5;
-                }""")
-                if has_qr:
-                    break
+                ifr = page.query_selector("iframe[src*='qr_auth'], iframe")
+                if ifr:
+                    ifr.screenshot(path=QR_IMG_LOCAL)
+                else:
+                    page.screenshot(path=QR_IMG_LOCAL)
+                if os.path.isdir(artifact_dir):
+                    import shutil
+                    shutil.copy2(QR_IMG_LOCAL, os.path.join(artifact_dir, "qr.png"))
             except Exception:
                 pass
+
+        for _ in range(30):
+            handle_challenge(page)
+            if page.query_selector("iframe[src*='qr_auth'], iframe"):
+                time.sleep(2)
+                take_qr_screenshot()
+                break
             time.sleep(1)
 
-        time.sleep(2)
-        try:
-            page.screenshot(path=QR_IMG_LOCAL)
-        except Exception:
-            pass
+        take_qr_screenshot()
 
         print(f"\n" + "="*60)
         print(f"СВЕЖИЙ QR-КОД ГОТОВ: {QR_IMG_LOCAL}")
@@ -96,21 +79,14 @@ def main():
         start = time.time()
         success = False
         last_screenshot = time.time()
-        artifact_dir = "/root/.gemini/antigravity-cli/brain/bfc3a30b-4aec-4493-a4f3-bddde95ec583"
 
         while time.time() - start < 300:
             time.sleep(1.5)
             handle_challenge(page)
 
             if time.time() - last_screenshot > 2.5:
-                try:
-                    page.screenshot(path=QR_IMG_LOCAL)
-                    if os.path.isdir(artifact_dir):
-                        import shutil
-                        shutil.copy2(QR_IMG_LOCAL, os.path.join(artifact_dir, "qr.png"))
-                    last_screenshot = time.time()
-                except Exception:
-                    pass
+                take_qr_screenshot()
+                last_screenshot = time.time()
 
             # Ввод кода из code.txt если появился input
             if os.path.exists(CODE_FILE):
