@@ -217,6 +217,25 @@ def extract_credentials_playwright(
                 else:
                     break
 
+            # 1. Приоритетное извлечение официального неанонимного веб-токена из window.vk.webToken
+            try:
+                vk_token_obj = page.evaluate("""() => {
+                    if (window.vk && window.vk.webToken && window.vk.webToken.access_token && !window.vk.webToken.is_anonym) {
+                        return {
+                            access_token: window.vk.webToken.access_token,
+                            user_id: window.vk.id,
+                            expired_at: window.vk.webToken.expired_at
+                        };
+                    }
+                    return null;
+                }""")
+                if vk_token_obj:
+                    captured_token = vk_token_obj["access_token"]
+                    user_id = vk_token_obj.get("user_id") or user_id
+                    logger.info("Успешно извлечен официальный веб-токен пользователя из window.vk.webToken!")
+            except Exception as e:
+                logger.debug(f"Ошибка чтения window.vk.webToken: {e}")
+
             # 2. Проверка localStorage на сохраненные токены
             if not captured_token:
                 try:
