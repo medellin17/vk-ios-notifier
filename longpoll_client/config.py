@@ -26,6 +26,7 @@ POLL_WAIT_SEC = 25
 TOKEN_REFRESH_INTERVAL_HOURS = 20
 
 # Константы фильтрации и анти-спама
+ENABLE_TYPING_NOTIFICATIONS = False  # Отключено: устраняет задержки и лишние пуши перед сообщением
 TYPING_COOLDOWN_SEC = 180  # Максимум 1 пуш о наборе текста раз в 3 минуты на диалог
 EDIT_SUPPRESSION_WINDOW_SEC = 25  # Окно подавления быстрых правок опечаток (сек)
 EDIT_SIMILARITY_THRESHOLD = 0.80  # Порог сходства текстов для распознавания опечатки

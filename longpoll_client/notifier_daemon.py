@@ -23,6 +23,7 @@ from .config import (
     DEFAULT_USER_AGENT,
     EDIT_SIMILARITY_THRESHOLD,
     EDIT_SUPPRESSION_WINDOW_SEC,
+    ENABLE_TYPING_NOTIFICATIONS,
     LONGPOLL_VERSION,
     POLL_WAIT_SEC,
     TOKEN_REFRESH_INTERVAL_HOURS,
@@ -223,6 +224,7 @@ async def send_bark_push_async(
         "icon": "https://vk.com/images/svg_icons/ic_head_logo.svg",
         "url": url,
         "sound": "calypso",
+        "level": "timeSensitive",
     }
 
     try:
@@ -370,6 +372,9 @@ class VKLongPollDaemon:
 
     async def handle_typing_event(self, event: Dict[str, Any]):
         """Обработка статуса 'печатает...' с кулдауном 180 сек."""
+        if not ENABLE_TYPING_NOTIFICATIONS:
+            return
+
         peer_id = event["peer_id"]
         peer_key = str(peer_id)
         now = time.time()
