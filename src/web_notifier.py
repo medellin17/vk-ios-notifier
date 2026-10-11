@@ -4,6 +4,7 @@ import random
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 import requests
 from playwright.sync_api import sync_playwright
@@ -54,8 +55,10 @@ if not BARK_KEY:
     print("[ОШИБКА] BARK_KEY не найден в .env")
     sys.exit(1)
 
-def send_bark_push(title: str, text: str, url: str = "https://vk.ru/im"):
-    """Отправляет push-уведомление в Bark на iPhone."""
+bark_session = requests.Session()
+bark_executor = ThreadPoolExecutor(max_workers=2)
+
+def _do_send_bark(title: str, text: str, url: str):
     api_url = f"https://api.day.app/{BARK_KEY}/"
     payload = {
         "title": title,
@@ -63,14 +66,19 @@ def send_bark_push(title: str, text: str, url: str = "https://vk.ru/im"):
         "group": "VK",
         "icon": "https://vk.com/images/svg_icons/ic_head_logo.svg",
         "url": url,
-        "sound": "calypso"
+        "sound": "calypso",
+        "level": "timeSensitive"
     }
     try:
-        res = requests.post(api_url, json=payload, timeout=5)
+        res = bark_session.post(api_url, json=payload, timeout=5)
         res.raise_for_status()
         print(f"[{time.strftime('%X')}] 🔔 Пуш отправлен в Bark: {title} | {text}")
     except Exception as e:
         print(f"[{time.strftime('%X')}] [!] Ошибка отправки в Bark: {e}")
+
+def send_bark_push(title: str, text: str, url: str = "https://vk.ru/im"):
+    """Отправляет push-уведомление в Bark на iPhone асинхронно через постоянное keep-alive соединение."""
+    bark_executor.submit(_do_send_bark, title, text, url)
 
 def handle_challenge(page):
     """Прокликивает плашку 'Проверяем, что вы не робот' / сертификатов Минцифры."""
@@ -104,14 +112,9 @@ def setup_dom_observer(page):
             const markDirty = () => { window.__vk_dom_dirty = true; };
             const observer = new MutationObserver(markDirty);
             
-            const target = document.querySelector("#im_dialogs") || document.querySelector("main") || document.body;
+            const target = document.body;
             if (target) {
                 observer.observe(target, { childList: true, subtree: true, characterData: true });
-            }
-            
-            const sideBar = document.querySelector("#side_bar") || document.querySelector("#l_msg");
-            if (sideBar) {
-                observer.observe(sideBar, { childList: true, subtree: true, characterData: true });
             }
         }""")
     except Exception:
@@ -120,7 +123,7 @@ def setup_dom_observer(page):
 TYPING_COOLDOWN_SEC = 180  # Максимум 1 пуш о наборе текста раз в 3 минуты на диалог
 EDIT_SUPPRESSION_WINDOW_SEC = 25  # Окно подавления быстрых правок опечаток (сек)
 EDIT_SIMILARITY_THRESHOLD = 0.80  # Порог сходства текстов для распознавания опечатки
-POLL_INTERVAL_MS = 1200  # Интервал проверки мессенджера (мс) — ускоренная доставка
+POLL_INTERVAL_MS = 600  # Интервал проверки мессенджера (мс) — ускоренная субсекундная доставка
 
 def clean_duplicate_author(text: str) -> str:
     """
@@ -291,7 +294,7 @@ def run_messenger_listener():
         page = context.new_page()
 
         print(f"[{time.strftime('%X')}] [2/3] Открытие https://vk.ru/im...")
-        page.goto("https://vk.ru/im")
+        page.goto("https://vk.ru/im", wait_until="domcontentloaded", timeout=45000)
 
         # Проходим challenge если вылез
         handle_challenge(page)
@@ -334,7 +337,7 @@ def run_messenger_listener():
         last_incoming_push_time = {}
         # Время последнего снятия состояния для страховочного heartbeat
         last_state_extract_time = time.time()
-        FORCE_EXTRACT_INTERVAL_SEC = 10  # Страховочный опрос раз в 10 секунд
+        FORCE_EXTRACT_INTERVAL_SEC = 2.0  # Страховочный опрос раз в 2 секунды вместо 10
 
         print(f"[{time.strftime('%X')}] Текущее состояние: непрочитанных ЛС = {last_msg_count}, уведомлений = {last_bell_count}")
         print(f"[{time.strftime('%X')}] Актуальные верхние диалоги ({len(seen_dialogs)}):")
