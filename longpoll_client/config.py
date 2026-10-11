@@ -23,7 +23,7 @@ VK_APP_ID = 6287487  # VK Web Client App ID
 VK_API_VERSION = "5.199"
 LONGPOLL_VERSION = 3
 POLL_WAIT_SEC = 25
-TOKEN_REFRESH_INTERVAL_HOURS = 20
+TOKEN_REFRESH_INTERVAL_MINUTES = 10  # Авто-обновление каждые 10 минут (веб-токен живет 15 минут)
 
 # Константы фильтрации и анти-спама
 ENABLE_TYPING_NOTIFICATIONS = False  # Отключено: устраняет задержки и лишние пуши перед сообщением

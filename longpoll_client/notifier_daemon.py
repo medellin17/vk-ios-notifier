@@ -26,7 +26,7 @@ from .config import (
     ENABLE_TYPING_NOTIFICATIONS,
     LONGPOLL_VERSION,
     POLL_WAIT_SEC,
-    TOKEN_REFRESH_INTERVAL_HOURS,
+    TOKEN_REFRESH_INTERVAL_MINUTES,
     TYPING_COOLDOWN_SEC,
     get_bark_key,
     get_configured_token,
@@ -403,10 +403,10 @@ class VKLongPollDaemon:
             )
 
     async def check_periodic_token_refresh(self):
-        """Периодическое (раз в 20 часов) фоновое обновление токена по куке remixsid."""
+        """Периодическое (раз в 10 минут) фоновое обновление веб-токена через легкий HTTP GET."""
         now = time.time()
-        if now - self.last_token_refresh_time >= TOKEN_REFRESH_INTERVAL_HOURS * 3600:
-            logger.info("Плановое обновление веб-токена (интервал 20 ч)...")
+        if now - self.last_token_refresh_time >= TOKEN_REFRESH_INTERVAL_MINUTES * 60:
+            logger.info(f"Плановое обновление веб-токена (интервал {TOKEN_REFRESH_INTERVAL_MINUTES} мин)...")
             try:
                 creds = ensure_valid_credentials(force_refresh=True)
                 new_token = creds.get("access_token")
@@ -488,7 +488,22 @@ class VKLongPollDaemon:
                         await asyncio.sleep(1)
 
             except VKAuthError as e:
-                logger.error(f"[КРИТИЧНО] Авторизация токена не удалась: {e}")
+                logger.warning(f"Токен LongPoll истек или недействителен ({e}). Автоматическое обновление...")
+                try:
+                    # Легковесное обновление через HTTP GET со страницы vk.ru/im
+                    creds = ensure_valid_credentials(force_refresh=True)
+                    new_token = creds.get("access_token", "")
+                    if new_token:
+                        self.token = new_token
+                        self._transport.update_token(new_token)
+                        self.last_token_refresh_time = time.time()
+                        server_info = None
+                        logger.info("Веб-токен успешно обновлен на лету, продолжение работы.")
+                        continue
+                except Exception as ex:
+                    logger.error(f"[КРИТИЧНО] Автообновление токена не удалось: {ex}")
+
+                # Пуш отправляется ТОЛЬКО если автообновление через HTTP и куки реально провалилось
                 await send_bark_push_async(
                     self._bark_session,
                     self.bark_key,
@@ -496,15 +511,7 @@ class VKLongPollDaemon:
                     "Сессия VK истекла. Требуется повторный вход через QR-код!",
                     url="https://vk.ru/",
                 )
-                try:
-                    logger.info("Попытка экстренного обновления учетных данных...")
-                    creds = ensure_valid_credentials(force_refresh=True)
-                    self.token = creds.get("access_token", "")
-                    self._transport.update_token(self.token)
-                    server_info = None
-                except Exception as ex:
-                    logger.error(f"Не удалось восстановить токен: {ex}. Пауза 60 сек...")
-                    await asyncio.sleep(60)
+                await asyncio.sleep(60)
 
             except Exception as e:
                 logger.error(f"Исключение в цикле LongPoll: {e}. Переподключение через 5 сек...")

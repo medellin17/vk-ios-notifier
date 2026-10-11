@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+import re
 import requests
 
 from .config import (
@@ -85,6 +86,56 @@ def refresh_token_via_http(remixsid: str, proxy: Optional[str] = None) -> Option
     if proxy:
         proxies = {"http": proxy, "https": proxy}
 
+    # 1. Приоритетный способ: прямое получение страницы vk.ru/im с сессионными куками
+    # VK отдает объект window.vk.webToken со свежим access_token
+    session_cookies = {}
+    if SESSION_FILE.is_file():
+        try:
+            with open(SESSION_FILE, "r", encoding="utf-8") as f:
+                s_data = json.load(f)
+                for c in s_data.get("cookies", []):
+                    if c.get("name") and c.get("value"):
+                        session_cookies[c["name"]] = c["value"]
+        except Exception:
+            pass
+
+    if not session_cookies:
+        session_cookies = {"remixsid": remixsid}
+    else:
+        session_cookies["remixsid"] = remixsid
+
+    try:
+        logger.info("Попытка легкого HTTP-извлечения веб-токена со страницы https://vk.ru/im...")
+        resp = requests.get(
+            "https://vk.ru/im",
+            cookies=session_cookies,
+            headers=headers,
+            proxies=proxies,
+            timeout=12,
+        )
+        if resp.status_code == 200 and "webToken" in resp.text:
+            match = re.search(r'\"webToken\"[^{]*\{([^}]+)\}', resp.text) or re.search(r'webToken\s*:\s*\{([^}]+)\}', resp.text)
+            if match:
+                token_data = json.loads("{" + match.group(1) + "}")
+                token = token_data.get("access_token")
+                if token:
+                    creds = {
+                        "access_token": token,
+                        "remixsid": remixsid,
+                        "remixnsid": session_cookies.get("remixnsid", ""),
+                        "expired_at": token_data.get("expired_at"),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "app_id": VK_APP_ID,
+                        "method": "http_page_token",
+                    }
+                    save_credentials(creds)
+                    update_env_file("VK_TOKEN", token)
+                    logger.info("Веб-токен успешно обновлен через легкий HTTP GET (0 МБ RAM)!")
+                    return creds
+    except Exception as e:
+        logger.debug(f"Не удалось извлечь токен со страницы https://vk.ru/im: {e}")
+
+    # 2. Запасной способ: вызовы внутренних endpoints
     endpoints = [
         "https://vk.ru/al_im.php?act=get_token",
         "https://vk.com/al_im.php?act=get_token",
