@@ -7,16 +7,19 @@
 
 ## Команды
 - Установка зависимостей: `pip install -r requirements.txt && playwright install chromium`
+- Запуск тестов (E2E и интеграционные): `pytest`
 - Первичная авторизация (QR): `python3 src/qr_auth.py`
-- Ручной запуск мониторинга: `python3 src/web_notifier.py`
+- Ручной запуск мониторинга (Playwright): `python3 src/web_notifier.py`
+- Ручной запуск мониторинга (LongPoll ~20 МБ): `python3 -m longpoll_client.notifier_daemon`
 - Управление systemd: `systemctl status|restart|stop|start vk-notifier`
 - Просмотр логов сервиса: `journalctl -u vk-notifier -f`
 
 ## Структура
-- `src/stealth_browser.py` — единый модуль антидетекта: спуфинг Windows 10, WebGL NVIDIA, таймзоны Europe/Moscow и поддержка `VK_PROXY`.
-- `src/web_notifier.py` — основной сервис мониторинга диалогов VK Web через Playwright, MutationObserver и отправки push в Bark.
+- `src/stealth_browser.py` — единый модуль антидетекта: спуфинг Windows 10, WebGL NVIDIA, таймзоны Europe/Moscow и поддержка `VK_PROXY` (HTTP/SOCKS5 с аутентификацией).
+- `src/web_notifier.py` — основной сервис мониторинга диалогов VK Web через Playwright, MutationObserver, детект истечения сессии и отправка push в Bark.
 - `src/qr_auth.py` — CLI-скрипт для генерации QR-кода и сохранения веб-сессии в `session.json`.
-- `src/inspect_chat.py` — вспомогательная утилита для проверки селекторов и DOM-элементов страницы сообщений.
+- `longpoll_client/` — альтернативный легковесный модуль Web LongPoll (aiohttp ~20 МБ RAM без постоянного браузера).
+- `tests/` — комплекс сквозных E2E-тестов (прокси, гео-чекер IP, Bark шлюз, живая сессия Playwright, дедупликация кэша).
 - `vk-notifier.service.example` — шаблон unit-файла systemd для фоновой работы сервиса.
 - `.env.example` — шаблон конфигурации окружения (`BARK_KEY`, `VK_PROXY`).
 

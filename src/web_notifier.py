@@ -353,6 +353,17 @@ def run_messenger_listener():
                 time.sleep(60)
                 continue
 
+            # Проверяем, не слетела ли сессия (редирект на страницу авторизации)
+            try:
+                page_title = page.title()
+            except Exception:
+                page_title = ""
+            if "/?u=2" in current_url or "login" in current_url or "ВКонтакте | Добро пожаловать" in page_title:
+                print(f"[{time.strftime('%X')}] [КРИТИЧНО] Сессия истекла (URL: {current_url}, title: '{page_title}'). Требуется повторный вход!")
+                send_bark_push("VK: Сессия истекла", "Сессия VK истекла. Требуется повторный вход через QR-код!", "https://vk.ru/")
+                time.sleep(60)
+                continue
+
             # 2. Проверяем, не вылетел ли challenge
             if "challenge.html" in current_url or "mincyfry-cert" in current_url:
                 handle_challenge(page)

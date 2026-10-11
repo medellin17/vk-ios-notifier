@@ -50,8 +50,7 @@ def main():
         time.sleep(2)
         handle_challenge(page)
 
-        print("[3/4] Ожидание отрисовки QR-кода...")
-        artifact_dir = os.environ.get("ANTIGRAVITY_ARTIFACT_DIR", "/root/.gemini/antigravity-cli/brain/4fefe173-f886-45ff-8a40-ba7d0061a7bf")
+        artifact_dir = os.environ.get("ANTIGRAVITY_ARTIFACT_DIR", "/root/.gemini/antigravity-cli/brain/af0a733a-19bb-4731-a76a-086e95ca82ca")
 
         def take_qr_screenshot():
             try:

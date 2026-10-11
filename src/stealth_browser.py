@@ -73,6 +73,15 @@ def get_proxy_config() -> Optional[dict]:
         except Exception:
             pass
     if proxy_url:
+        from urllib.parse import urlparse
+        p = urlparse(proxy_url)
+        if p.username:
+            scheme = "http" if "socks" in p.scheme else p.scheme
+            return {
+                "server": f"{scheme}://{p.hostname}:{p.port}",
+                "username": p.username,
+                "password": p.password,
+            }
         return {"server": proxy_url}
     return None
 

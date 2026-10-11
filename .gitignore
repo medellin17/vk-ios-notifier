@@ -4,6 +4,9 @@
 !.env.example
 session.json
 seen_cache.json
+credentials.json
+*/credentials.json
+*/seen_cache.json
 vk_config.v2.json
 code.txt
 config.txt
