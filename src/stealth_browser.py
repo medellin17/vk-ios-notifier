@@ -56,6 +56,27 @@ EXTRA_STEALTH_JS = """
         if (!window.chrome.loadTimes) {
             window.chrome.loadTimes = function() {};
         }
+        // 4. Реалистичный список плагинов (Chrome PDF Viewer)
+        if (navigator.plugins.length === 0) {
+            const mockPlugins = [
+                { name: "PDF Viewer", filename: "internal-pdf-viewer", description: "Portable Document Format" },
+                { name: "Chrome PDF Viewer", filename: "internal-pdf-viewer", description: "Portable Document Format" },
+                { name: "Chromium PDF Viewer", filename: "internal-pdf-viewer", description: "Portable Document Format" }
+            ];
+            Object.defineProperty(Object.getPrototypeOf(navigator), 'plugins', {
+                get: () => mockPlugins
+            });
+        }
+
+        // 5. Микро-шум в AudioContext (Fingerprint protection как в Donut/Wayfern)
+        const origGetChannelData = AudioBuffer.prototype.getChannelData;
+        AudioBuffer.prototype.getChannelData = function() {
+            const results = origGetChannelData.apply(this, arguments);
+            for (let i = 0; i < results.length; i = i + 100) {
+                results[i] = results[i] + 0.0000001;
+            }
+            return results;
+        };
     } catch(e) {}
 })();
 """

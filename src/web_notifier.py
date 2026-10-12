@@ -352,9 +352,9 @@ def run_messenger_listener():
             current_url = page.url
             if "blocked" in current_url or "id.vk.com/blocked" in current_url:
                 print(f"[{time.strftime('%X')}] [КРИТИЧНО] Обнаружена страница блокировки VK: {current_url}")
-                send_bark_push("VK: Внимание!", "Страница VK заморожена или требует проверки!", current_url)
-                time.sleep(60)
-                continue
+                _do_send_bark("VK: Внимание!", "Страница VK заморожена или требует проверки!", current_url)
+                print(f"[{time.strftime('%X')}] Остановка сервиса для защиты аккаунта (Circuit Breaker).")
+                sys.exit(1)
 
             # Проверяем, не слетела ли сессия (редирект на страницу авторизации)
             try:
@@ -362,10 +362,10 @@ def run_messenger_listener():
             except Exception:
                 page_title = ""
             if "/?u=2" in current_url or "login" in current_url or "ВКонтакте | Добро пожаловать" in page_title:
-                print(f"[{time.strftime('%X')}] [КРИТИЧНО] Сессия истекла (URL: {current_url}, title: '{page_title}'). Требуется повторный вход!")
-                send_bark_push("VK: Сессия истекла", "Сессия VK истекла. Требуется повторный вход через QR-код!", "https://vk.ru/")
-                time.sleep(60)
-                continue
+                print(f"[{time.strftime('%X')}] [КРИТИЧНО] Сессия истекла (URL: {current_url}, title: '{page_title}').")
+                _do_send_bark("VK: Сессия истекла", "Сессия VK истекла. Требуется повторный вход через QR-код!", "https://vk.ru/")
+                print(f"[{time.strftime('%X')}] Остановка сервиса для предотвращения спама входа (Circuit Breaker).")
+                sys.exit(1)
 
             # 2. Проверяем, не вылетел ли challenge
             if "challenge.html" in current_url or "mincyfry-cert" in current_url:
@@ -453,12 +453,14 @@ def run_messenger_listener():
             last_bell_count = current_bell_count
 
 def main():
-    while True:
-        try:
-            run_messenger_listener()
-        except Exception as e:
-            print(f"[{time.strftime('%X')}] Исключение в слушателе: {e}. Перезапуск через 5 сек...")
-            time.sleep(5)
+    try:
+        run_messenger_listener()
+    except (KeyboardInterrupt, SystemExit):
+        print(f"[{time.strftime('%X')}] Остановка сервиса.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"[{time.strftime('%X')}] Непредвиденная ошибка в слушателе: {e}.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

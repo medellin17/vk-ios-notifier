@@ -9,12 +9,12 @@ User=root
 # Replace /root/vk-ios-notifier with the actual directory where this repo is cloned
 WorkingDirectory=/root/vk-ios-notifier
 Environment=PYTHONUNBUFFERED=1
-# Основной легковесный демон (LongPoll, ~38 МБ RAM, моментальная доставка без задержек):
-ExecStart=/usr/bin/python3 -m longpoll_client.notifier_daemon
-# Альтернативный браузерный фоллбэк (Chromium DOM, ~500 МБ RAM):
-# ExecStart=/usr/bin/python3 /root/vk-ios-notifier/src/web_notifier.py
-Restart=always
-RestartSec=5
+# Основной стабильный браузерный режим (Chromium DOM, нативный фингерпринт):
+ExecStart=/usr/bin/python3 /root/vk-ios-notifier/src/web_notifier.py
+Restart=on-failure
+RestartSec=60
+StartLimitIntervalSec=300
+StartLimitBurst=2
 KillMode=mixed
 TimeoutStopSec=10
 
