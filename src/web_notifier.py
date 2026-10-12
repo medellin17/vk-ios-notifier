@@ -223,7 +223,7 @@ def extract_state(page):
 
             // 3. Список диалогов
             const convos = [];
-            const items = document.querySelectorAll("button.ConvoListItem");
+            const items = document.querySelectorAll("button.ConvoListItem, .ConvoListItem");
             for (let item of items) {
                 const peerId = item.getAttribute("data-peer-id") || "";
                 const titleEl = item.querySelector(".ConvoTitle__title, .ConvoTitle__author, h3");
@@ -251,12 +251,10 @@ def extract_state(page):
                     return out;
                 }
 
-                // Извлекаем полный текст из ConvoListItem__text с сохранением текста и эмодзи
                 if (textEl) {
                     snippet = getFullTextWithEmoji(textEl).trim();
                 }
                 
-                // Если текст пуст (например, одиночный эмодзи), проверяем title у ConvoListItem__message (title="👌🏻")
                 if (!snippet && msgEl) {
                     const titleAttr = msgEl.getAttribute("title");
                     if (titleAttr) {
@@ -264,7 +262,6 @@ def extract_state(page):
                     }
                 }
                 
-                // Проверяем вложения
                 if (!snippet && item.querySelector("[class*='attach' i], [class*='sticker' i]")) {
                     snippet = "[Вложение/Стикер]";
                 }
@@ -275,6 +272,39 @@ def extract_state(page):
                         author: author,
                         snippet: snippet
                     });
+                }
+            }
+
+            // 3.1 Фоллбэк: если DOM диалогов в SPA-модели срендерен виртуально (скелетон),
+            // читаем актуальные диалоги напрямую из памяти браузера (window.cur.apiPrefetchCache)
+            if (convos.length === 0 && window.cur && window.cur.apiPrefetchCache) {
+                const cache = window.cur.apiPrefetchCache;
+                for (let k of Object.keys(cache)) {
+                    const item = cache[k];
+                    if (item && item.response && item.response.conversations && item.response.conversations.items) {
+                        const profMap = {};
+                        for (let p of (item.response.profiles || [])) {
+                            profMap[p.id] = (p.first_name + ' ' + p.last_name).trim();
+                        }
+                        for (let it of item.response.conversations.items) {
+                            const c = it.conversation;
+                            const m = it.last_message;
+                            if (!c || !c.peer) continue;
+                            const peerId = String(c.peer.id);
+                            const author = profMap[c.peer.id] || ('id' + c.peer.id);
+                            let text = m ? (m.text || '') : '';
+                            if (!text && m && m.attachments && m.attachments.length > 0) {
+                                const att = m.attachments[0];
+                                text = att.type === 'sticker' ? '[Стикер]' : (att.type === 'doc' ? '[Файл]' : '[Вложение]');
+                            }
+                            convos.push({
+                                peerId: peerId,
+                                author: author,
+                                snippet: text
+                            });
+                        }
+                        break;
+                    }
                 }
             }
 
@@ -301,14 +331,13 @@ def run_messenger_listener():
         page.wait_for_timeout(3000)
         handle_challenge(page)
 
-        # Ждем загрузки элементов диалогов
-        try:
-            page.wait_for_selector("button.ConvoListItem", timeout=20000)
-            page.wait_for_timeout(3000)
-        except Exception:
+        # Ждем загрузки диалогов (в DOM или в памяти SPA)
+        for _ in range(10):
+            st = extract_state(page)
+            if st["convos"]:
+                break
+            page.wait_for_timeout(1500)
             handle_challenge(page)
-            page.wait_for_selector("button.ConvoListItem", timeout=15000)
-            page.wait_for_timeout(3000)
 
         print(f"[{time.strftime('%X')}] [3/3] Мессенджер загружен! Инициализация слушателя...")
 
