@@ -23,11 +23,28 @@ CACHE_FILE = os.path.join(BASE_DIR, "seen_cache.json")
 CHROME_BIN = "/root/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome"
 
 def load_seen_cache():
-    """Загружает сохраненное состояние диалогов с диска."""
+    """
+    Загружает сохраненное состояние диалогов с диска.
+    Поддерживает как новый формат {key: {"snippet": "...", "msg_id": 123}},
+    так и устаревший строковый формат {key: "..."}.
+    """
     if os.path.isfile(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                normalized = {}
+                for k, v in data.items():
+                    if isinstance(v, dict):
+                        normalized[k] = {
+                            "snippet": v.get("snippet", ""),
+                            "msg_id": v.get("msg_id")
+                        }
+                    elif isinstance(v, str):
+                        normalized[k] = {
+                            "snippet": v,
+                            "msg_id": None
+                        }
+                return normalized
         except Exception:
             pass
     return {}
@@ -267,10 +284,13 @@ def extract_state(page):
                 }
 
                 if (author) {
+                    const rawMsgId = item.getAttribute("data-msg-id") || item.getAttribute("data-last-msg-id");
+                    const parsedMsgId = rawMsgId ? parseInt(rawMsgId, 10) : null;
                     convos.push({
                         peerId: peerId,
                         author: author,
-                        snippet: snippet
+                        snippet: snippet,
+                        msgId: (!isNaN(parsedMsgId) && parsedMsgId) ? parsedMsgId : null
                     });
                 }
             }
@@ -279,28 +299,77 @@ def extract_state(page):
             // читаем актуальные диалоги напрямую из памяти браузера (window.cur.apiPrefetchCache)
             if (convos.length === 0 && window.cur && window.cur.apiPrefetchCache) {
                 const cache = window.cur.apiPrefetchCache;
-                for (let k of Object.keys(cache)) {
-                    const item = cache[k];
-                    if (item && item.response && item.response.conversations && item.response.conversations.items) {
+                const list = Array.isArray(cache) ? cache : Object.values(cache);
+                for (let entry of list) {
+                    if (entry && entry.response && entry.response.conversations && entry.response.conversations.items) {
+                        const profiles = entry.response.profiles || [];
+                        const groups = entry.response.groups || [];
                         const profMap = {};
-                        for (let p of (item.response.profiles || [])) {
-                            profMap[p.id] = (p.first_name + ' ' + p.last_name).trim();
+                        for (let p of profiles) profMap[p.id] = (p.first_name + ' ' + p.last_name).trim();
+                        for (let g of groups) profMap[-g.id] = g.name;
+
+                        function getAttachmentType(att) {
+                            if (!att) return '[Вложение]';
+                            const t = att.type;
+                            if (t === 'sticker') return '[Стикер]';
+                            if (t === 'doc') return '[Файл]';
+                            if (t === 'photo') return '[Фотография]';
+                            if (t === 'audio_message') return '[Голосовое сообщение]';
+                            if (t === 'video' || t === 'video_message') return '[Видеозапись]';
+                            if (t === 'audio') return '[Аудиозапись]';
+                            if (t === 'wall') return '[Запись на стене]';
+                            return '[Вложение]';
                         }
-                        for (let it of item.response.conversations.items) {
+
+                        for (let it of entry.response.conversations.items) {
                             const c = it.conversation;
                             const m = it.last_message;
                             if (!c || !c.peer) continue;
                             const peerId = String(c.peer.id);
-                            const author = profMap[c.peer.id] || ('id' + c.peer.id);
+                            const isChat = c.peer.type === 'chat';
+                            const chatTitle = (c.chat_settings && c.chat_settings.title) ? c.chat_settings.title : '';
+                            const author = isChat ? (chatTitle || ('Беседа ' + peerId)) : (profMap[c.peer.id] || ('id' + peerId));
+                            
                             let text = m ? (m.text || '') : '';
-                            if (!text && m && m.attachments && m.attachments.length > 0) {
-                                const att = m.attachments[0];
-                                text = att.type === 'sticker' ? '[Стикер]' : (att.type === 'doc' ? '[Файл]' : '[Вложение]');
+                            if (m && m.action) {
+                                const act = m.action;
+                                const actUser = profMap[act.member_id] || '';
+                                if (act.type === 'chat_invite_user') text = 'пригласил ' + actUser;
+                                else if (act.type === 'chat_kick_user') text = 'исключил ' + actUser;
+                                else if (act.type === 'chat_title_update') text = 'изменил название чата на «' + (act.text || '') + '»';
+                                else text = act.text || 'Действие в чате';
+                            } else if (!text && m) {
+                                if (m.attachments && m.attachments.length > 0) {
+                                    if (m.attachments.length > 1) {
+                                        text = m.attachments.length + ' вложения';
+                                    } else {
+                                        text = getAttachmentType(m.attachments[0]);
+                                    }
+                                } else if (m.fwd_messages && m.fwd_messages.length > 0) {
+                                    const f = m.fwd_messages[0];
+                                    if (f.attachments && f.attachments.length > 0) {
+                                        text = getAttachmentType(f.attachments[0]);
+                                    } else if (f.text) {
+                                        text = f.text;
+                                    } else {
+                                        text = '[Пересланное сообщение]';
+                                    }
+                                }
                             }
+
+                            if (isChat && m && m.from_id && text) {
+                                const sender = profMap[m.from_id] || '';
+                                if (sender && !text.startsWith(sender + ':')) {
+                                    text = sender + ': ' + text;
+                                }
+                            }
+
                             convos.push({
                                 peerId: peerId,
                                 author: author,
-                                snippet: text
+                                snippet: text,
+                                msgId: m ? m.id : null,
+                                isOut: m ? (m.out === 1) : false
                             });
                         }
                         break;
@@ -353,11 +422,14 @@ def run_messenger_listener():
         last_msg_count = initial_state["msgCount"]
         last_bell_count = initial_state["bellCount"]
         
-        # Хранилище последних сообщений по ID диалога или автору: {key: snippet}
+        # Хранилище последних сообщений по ID диалога или автору: {key: {"snippet": ..., "msg_id": ...}}
         seen_dialogs = load_seen_cache()
         for d in initial_state["convos"]:
             key = d["peerId"] if d["peerId"] else d["author"]
-            seen_dialogs[key] = clean_duplicate_author(d["snippet"])
+            seen_dialogs[key] = {
+                "snippet": clean_duplicate_author(d["snippet"]),
+                "msg_id": d.get("msgId")
+            }
         save_seen_cache(seen_dialogs)
 
         # Хранилище таймштампов последней отправки статуса 'печатает': {key: timestamp}
@@ -440,32 +512,50 @@ def run_messenger_listener():
                 if is_ignored_snippet(snippet):
                     continue
 
-                # 1.3 Реальные входящие сообщения с дедупликацией разметки и правок
+                # 1.3 Реальные входящие сообщения с дедупликацией разметки, msg_id и правок
+                new_msg_id = c.get("msgId")
                 norm_snippet = normalize_snippet(snippet)
-                old_raw = seen_dialogs.get(key, "")
+                
+                cached_entry = seen_dialogs.get(key)
+                if isinstance(cached_entry, dict):
+                    old_raw = cached_entry.get("snippet", "")
+                    old_msg_id = cached_entry.get("msg_id")
+                elif isinstance(cached_entry, str):
+                    old_raw = cached_entry
+                    old_msg_id = None
+                else:
+                    old_raw = ""
+                    old_msg_id = None
+
                 old_norm = normalize_snippet(old_raw)
 
                 if key not in seen_dialogs:
-                    seen_dialogs[key] = snippet
+                    seen_dialogs[key] = {"snippet": snippet, "msg_id": new_msg_id}
                     save_seen_cache(seen_dialogs)
                     last_incoming_push_time[key] = now
                     print(f"[{time.strftime('%X')}] [НОВОЕ ЛС] Новый диалог: {author} -> {snippet}")
                     send_bark_push(f"VK: {author}", snippet)
+                elif new_msg_id is not None and old_msg_id is not None and new_msg_id == old_msg_id:
+                    # Идентификатор сообщения не изменился: изменение сниппета вызвано
+                    # прочтением диалога или дребезгом разметки (например, 'Имя: Текст' <-> 'Текст').
+                    if old_raw != snippet:
+                        seen_dialogs[key] = {"snippet": snippet, "msg_id": new_msg_id}
+                        save_seen_cache(seen_dialogs)
                 elif old_norm != norm_snippet:
                     time_since_push = now - last_incoming_push_time.get(key, 0)
                     if time_since_push < EDIT_SUPPRESSION_WINDOW_SEC and is_minor_edit(old_norm, norm_snippet):
-                        seen_dialogs[key] = snippet
+                        seen_dialogs[key] = {"snippet": snippet, "msg_id": new_msg_id}
                         save_seen_cache(seen_dialogs)
                         print(f"[{time.strftime('%X')}] [ПРАВКА ОПЕЧАТКИ] {author} исправил сообщение: \"{snippet}\" (пуш подавлен)")
                     else:
-                        seen_dialogs[key] = snippet
+                        seen_dialogs[key] = {"snippet": snippet, "msg_id": new_msg_id}
                         save_seen_cache(seen_dialogs)
                         last_incoming_push_time[key] = now
                         print(f"[{time.strftime('%X')}] [НОВОЕ ЛС] {author} -> {snippet}")
                         send_bark_push(f"VK: {author}", snippet)
-                elif old_raw != snippet:
-                    # Текст после нормализации идентичен (например, дребезг [Файл] <-> Файл)
-                    seen_dialogs[key] = snippet
+                elif old_raw != snippet or (new_msg_id and new_msg_id != old_msg_id):
+                    # Текст нормализован одинаково, обновляем сохраненный сырой сниппет/msg_id
+                    seen_dialogs[key] = {"snippet": snippet, "msg_id": new_msg_id}
                     save_seen_cache(seen_dialogs)
 
             # 2. Проверяем рост общего счетчика непрочитанных ЛС (страховка)
