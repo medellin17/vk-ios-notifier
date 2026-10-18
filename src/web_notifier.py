@@ -4,6 +4,8 @@ import random
 import re
 import sys
 import time
+from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 import requests
@@ -141,6 +143,53 @@ TYPING_COOLDOWN_SEC = 180  # Максимум 1 пуш о наборе текс�
 EDIT_SUPPRESSION_WINDOW_SEC = 25  # Окно подавления быстрых правок опечаток (сек)
 EDIT_SIMILARITY_THRESHOLD = 0.80  # Порог сходства текстов для распознавания опечатки
 POLL_INTERVAL_MS = 600  # Интервал проверки мессенджера (мс) — ускоренная субсекундная доставка
+
+# --- Режим сна (Night Sleep Mode) для защиты от антифрода 24/7 ---
+SLEEP_MODE_ENABLED = os.getenv("SLEEP_MODE_ENABLED", "true").lower() in ("true", "1", "yes")
+SLEEP_TIMEZONE = os.getenv("SLEEP_TIMEZONE", "Europe/Moscow")
+SLEEP_START_STR = os.getenv("SLEEP_START", "02:00")  # Начало ночного сна
+SLEEP_END_STR = os.getenv("SLEEP_END", "07:30")      # Окончание ночного сна
+SESSION_MAX_LIFETIME_SEC = int(os.getenv("SESSION_MAX_LIFETIME_SEC", str(8 * 3600)))  # Мягкий реконнект каждые 8 часов
+
+def parse_time_str(val: str, default_hour: int, default_min: int) -> dtime:
+    try:
+        parts = val.strip().split(":")
+        return dtime(int(parts[0]), int(parts[1]))
+    except Exception:
+        return dtime(default_hour, default_min)
+
+SLEEP_START_TIME = parse_time_str(SLEEP_START_STR, 2, 0)
+SLEEP_END_TIME = parse_time_str(SLEEP_END_STR, 7, 30)
+
+def is_in_sleep_window(dt: datetime = None) -> bool:
+    """Проверяет, попадает ли текущее время в интервал ночного сна."""
+    if not SLEEP_MODE_ENABLED:
+        return False
+    try:
+        tz = ZoneInfo(SLEEP_TIMEZONE)
+    except Exception:
+        tz = ZoneInfo("Europe/Moscow")
+    now_dt = dt if dt else datetime.now(tz)
+    cur_t = now_dt.time()
+    if SLEEP_START_TIME < SLEEP_END_TIME:
+        return SLEEP_START_TIME <= cur_t < SLEEP_END_TIME
+    else:
+        # Переход через полночь (например, 02:00 -> 07:30)
+        return cur_t >= SLEEP_START_TIME or cur_t < SLEEP_END_TIME
+
+def seconds_until_wake(dt: datetime = None) -> float:
+    """Вычисляет, сколько секунд осталось спать до окончания окна сна."""
+    try:
+        tz = ZoneInfo(SLEEP_TIMEZONE)
+    except Exception:
+        tz = ZoneInfo("Europe/Moscow")
+    now_dt = dt if dt else datetime.now(tz)
+    target = now_dt.replace(hour=SLEEP_END_TIME.hour, minute=SLEEP_END_TIME.minute, second=0, microsecond=0)
+    if target <= now_dt:
+        # Если время пробуждения сегодня уже прошло, целевое время — завтра
+        target = target.replace(day=target.day + 1)
+    diff = (target - now_dt).total_seconds()
+    return max(60.0, diff)
 
 def clean_duplicate_author(text: str) -> str:
     """
@@ -387,6 +436,7 @@ def extract_state(page):
         return {"msgCount": 0, "bellCount": 0, "convos": []}
 
 def run_messenger_listener():
+    session_start_time = time.time()
     print(f"[{time.strftime('%X')}] [1/3] Запуск Google Chrome (Stealth / Windows / NVIDIA)...")
     with sync_playwright() as p:
         browser, context = create_stealth_browser_and_context(p, storage_state=SESSION_FILE)
@@ -448,6 +498,19 @@ def run_messenger_listener():
         # Основной цикл отслеживания
         while True:
             page.wait_for_timeout(POLL_INTERVAL_MS)
+            now = time.time()
+
+            # 0. Проверяем окно ночного сна (Night Sleep Mode)
+            if is_in_sleep_window():
+                print(f"[{time.strftime('%X')}] 🌙 Наступило время ночного сна ({SLEEP_START_STR} - {SLEEP_END_STR} {SLEEP_TIMEZONE}). Закрытие браузера...")
+                browser.close()
+                return "SLEEP"
+
+            # 0.1 Проверяем плановую ротацию сессии (каждые N часов)
+            if SESSION_MAX_LIFETIME_SEC > 0 and (now - session_start_time >= SESSION_MAX_LIFETIME_SEC):
+                print(f"[{time.strftime('%X')}] 🔄 Плановый мягкий рестарт сессии браузера (прошло {int((now - session_start_time)/3600)} ч.)...")
+                browser.close()
+                return "ROTATE"
             
             # 1. Проверяем, не перенаправило ли на блокировку/разморозку
             current_url = page.url
@@ -476,7 +539,6 @@ def run_messenger_listener():
 
             # Поддерживаем активность observer при перерисовках интерфейса
             setup_dom_observer(page)
-            now = time.time()
 
             # 3. Быстрая проверка изменений через MutationObserver
             try:
@@ -572,14 +634,32 @@ def run_messenger_listener():
             last_bell_count = current_bell_count
 
 def main():
-    try:
-        run_messenger_listener()
-    except (KeyboardInterrupt, SystemExit):
-        print(f"[{time.strftime('%X')}] Остановка сервиса.")
-        sys.exit(0)
-    except Exception as e:
-        print(f"[{time.strftime('%X')}] Непредвиденная ошибка в слушателе: {e}.")
-        sys.exit(1)
+    while True:
+        try:
+            # 1. Проверяем, не находимся ли мы прямо сейчас в окне сна
+            if is_in_sleep_window():
+                sec_to_wait = seconds_until_wake()
+                hours = round(sec_to_wait / 3600, 1)
+                print(f"[{time.strftime('%X')}] 🌙 Режим ночного сна активен ({SLEEP_START_STR} - {SLEEP_END_STR} {SLEEP_TIMEZONE}). Спим ~{hours} ч. (браузер закрыт)...")
+                time.sleep(sec_to_wait)
+                print(f"[{time.strftime('%X')}] ☀️ Окно сна завершено. Пробуждение и запуск браузера...")
+                time.sleep(random.uniform(5.0, 25.0))  # Естественная пауза перед пробуждением
+
+            # 2. Запуск браузерной сессии
+            result = run_messenger_listener()
+            if result == "SLEEP":
+                continue
+            elif result == "ROTATE":
+                pause = random.uniform(15.0, 45.0)
+                print(f"[{time.strftime('%X')}] Пауза {int(pause)} сек перед перезапуском сессии...")
+                time.sleep(pause)
+                continue
+        except (KeyboardInterrupt, SystemExit):
+            print(f"[{time.strftime('%X')}] Остановка сервиса.")
+            sys.exit(0)
+        except Exception as e:
+            print(f"[{time.strftime('%X')}] Ошибка в слушателе: {e}. Перезапуск через 30 секунд...")
+            time.sleep(30)
 
 if __name__ == "__main__":
     main()
