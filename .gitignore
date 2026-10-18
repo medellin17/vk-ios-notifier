@@ -3,8 +3,11 @@
 .env.*
 !.env.example
 session.json
+session_test.json
 seen_cache.json
 credentials.json
+research/*.jsonl
+research/*.json
 */credentials.json
 */seen_cache.json
 vk_config.v2.json
