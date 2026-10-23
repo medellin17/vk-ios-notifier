@@ -19,9 +19,14 @@ try:
     from src.stealth_browser import create_stealth_browser_and_context
 except ModuleNotFoundError:
     from stealth_browser import create_stealth_browser_and_context
-SESSION_FILE = os.path.join(BASE_DIR, "session.json")
+
+try:
+    from src.human_activity import perform_in_tab_human_activity
+except ModuleNotFoundError:
+    from human_activity import perform_in_tab_human_activity
+SESSION_FILE = os.path.join(BASE_DIR, os.getenv("VK_SESSION_FILE", "session.json"))
 ENV_FILE = os.path.join(BASE_DIR, ".env")
-CACHE_FILE = os.path.join(BASE_DIR, "seen_cache.json")
+CACHE_FILE = os.path.join(BASE_DIR, os.getenv("VK_CACHE_FILE", "seen_cache.json"))
 CHROME_BIN = "/root/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome"
 
 def load_seen_cache():
@@ -147,9 +152,16 @@ POLL_INTERVAL_MS = 600  # Интервал проверки мессенджер
 # --- Режим сна (Night Sleep Mode) для защиты от антифрода 24/7 ---
 SLEEP_MODE_ENABLED = os.getenv("SLEEP_MODE_ENABLED", "true").lower() in ("true", "1", "yes")
 SLEEP_TIMEZONE = os.getenv("SLEEP_TIMEZONE", "Europe/Moscow")
-SLEEP_START_STR = os.getenv("SLEEP_START", "02:00")  # Начало ночного сна
-SLEEP_END_STR = os.getenv("SLEEP_END", "07:30")      # Окончание ночного сна
+SLEEP_START_STR = os.getenv("SLEEP_START", "02:00")  # Базовое начало ночного сна
+SLEEP_END_STR = os.getenv("SLEEP_END", "07:30")      # Базовое окончание ночного сна
+SLEEP_JITTER_MIN = int(os.getenv("SLEEP_JITTER_MIN", "20"))  # Плавающее смещение сна (+- минут)
 SESSION_MAX_LIFETIME_SEC = int(os.getenv("SESSION_MAX_LIFETIME_SEC", str(8 * 3600)))  # Мягкий реконнект каждые 8 часов
+
+# --- Дневной микро-перерыв (Day Break) для разрыва непрерывного онлайна ---
+DAY_BREAK_ENABLED = os.getenv("DAY_BREAK_ENABLED", "true").lower() in ("true", "1", "yes")
+DAY_BREAK_START_HOUR = int(os.getenv("DAY_BREAK_START_HOUR", "17"))  # Окно: с 17:00
+DAY_BREAK_END_HOUR = int(os.getenv("DAY_BREAK_END_HOUR", "19"))      # Окно: до 19:00
+DAY_BREAK_DURATION_SEC = int(os.getenv("DAY_BREAK_DURATION_SEC", "900"))  # Длительность перерыва: 15 минут
 
 def parse_time_str(val: str, default_hour: int, default_min: int) -> dtime:
     try:
@@ -177,8 +189,8 @@ def is_in_sleep_window(dt: datetime = None) -> bool:
         # Переход через полночь (например, 02:00 -> 07:30)
         return cur_t >= SLEEP_START_TIME or cur_t < SLEEP_END_TIME
 
-def seconds_until_wake(dt: datetime = None) -> float:
-    """Вычисляет, сколько секунд осталось спать до окончания окна сна."""
+def seconds_until_wake(dt: datetime = None, apply_jitter: bool = True) -> float:
+    """Вычисляет, сколько секунд осталось спать до окончания окна сна с естественным джиттером."""
     try:
         tz = ZoneInfo(SLEEP_TIMEZONE)
     except Exception:
@@ -186,9 +198,10 @@ def seconds_until_wake(dt: datetime = None) -> float:
     now_dt = dt if dt else datetime.now(tz)
     target = now_dt.replace(hour=SLEEP_END_TIME.hour, minute=SLEEP_END_TIME.minute, second=0, microsecond=0)
     if target <= now_dt:
-        # Если время пробуждения сегодня уже прошло, целевое время — завтра
         target = target.replace(day=target.day + 1)
     diff = (target - now_dt).total_seconds()
+    if apply_jitter and SLEEP_JITTER_MIN > 0:
+        diff += random.uniform(-SLEEP_JITTER_MIN * 60, SLEEP_JITTER_MIN * 60)
     return max(60.0, diff)
 
 def clean_duplicate_author(text: str) -> str:
@@ -440,6 +453,15 @@ def run_messenger_listener():
     print(f"[{time.strftime('%X')}] [1/3] Запуск Google Chrome (Stealth / Windows / NVIDIA)...")
     with sync_playwright() as p:
         browser, context = create_stealth_browser_and_context(p, storage_state=SESSION_FILE)
+        
+        # Заглушаем шлюзы телеметрии (мягкий 200 OK без сбоев в UI)
+        try:
+            context.route("**/stats.vk-portal.net/**", lambda r: r.fulfill(status=200, content_type="application/json", body='{"result":true}'))
+            context.route("**/sdk-api.apptracer.ru/**", lambda r: r.fulfill(status=200, content_type="application/json", body='{"result":true}'))
+            context.route("**/stacks.vk-portal.net/**", lambda r: r.fulfill(status=200, content_type="application/json", body='{"result":true}'))
+        except Exception:
+            pass
+
         page = context.new_page()
 
         print(f"[{time.strftime('%X')}] [2/3] Открытие https://vk.ru/im...")
@@ -457,6 +479,16 @@ def run_messenger_listener():
                 break
             page.wait_for_timeout(1500)
             handle_challenge(page)
+
+        # Синтетическая смена видимости вкладки (сворачивание) для обнуления скора машинного присутствия
+        try:
+            page.evaluate("""() => {
+                Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+                Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+                document.dispatchEvent(new Event('visibilitychange'));
+            }""")
+        except Exception:
+            pass
 
         print(f"[{time.strftime('%X')}] [3/3] Мессенджер загружен! Инициализация слушателя...")
 
@@ -490,6 +522,14 @@ def run_messenger_listener():
         last_state_extract_time = time.time()
         FORCE_EXTRACT_INTERVAL_SEC = 2.0  # Страховочный опрос раз в 2 секунды вместо 10
 
+        # Таймер человеческой микро-активности внутри вкладки (раз в 4-7 часов)
+        last_human_activity_time = time.time()
+        next_human_activity_interval = random.uniform(4 * 3600, 7 * 3600)
+
+        # Выбираем случайное время для дневного 15-минутного перерыва (17:00 - 19:00)
+        day_break_scheduled_min = random.randint(0, 105) # от 17:00 до 18:45
+        day_break_today_done = False
+
         print(f"[{time.strftime('%X')}] Текущее состояние: непрочитанных ЛС = {last_msg_count}, уведомлений = {last_bell_count}")
         print(f"[{time.strftime('%X')}] Актуальные верхние диалоги ({len(seen_dialogs)}):")
         for d in initial_state["convos"][:4]:
@@ -505,6 +545,26 @@ def run_messenger_listener():
                 print(f"[{time.strftime('%X')}] 🌙 Наступило время ночного сна ({SLEEP_START_STR} - {SLEEP_END_STR} {SLEEP_TIMEZONE}). Закрытие браузера...")
                 browser.close()
                 return "SLEEP"
+
+            # 0.05 Проверяем дневной 15-минутный перерыв (между 17:00 и 19:00 МСК)
+            if DAY_BREAK_ENABLED:
+                try:
+                    cur_dt = datetime.now(ZoneInfo(SLEEP_TIMEZONE))
+                    if cur_dt.hour == DAY_BREAK_START_HOUR and cur_dt.minute >= day_break_scheduled_min and not day_break_today_done:
+                        print(f"[{time.strftime('%X')}] ☕ Дневной перерыв ({int(DAY_BREAK_DURATION_SEC/60)} мин, имитация ухода от ПК). Закрытие браузера...")
+                        browser.close()
+                        return "DAY_BREAK"
+                    elif cur_dt.hour > DAY_BREAK_END_HOUR:
+                        day_break_today_done = False  # Сброс флага на следующий день
+                except Exception:
+                    pass
+
+            # 0.08 Периодическая человеческая микро-активность внутри вкладки (движение мыши, скролл диалогов)
+            if now - last_human_activity_time >= next_human_activity_interval:
+                last_human_activity_time = now
+                next_human_activity_interval = random.uniform(4 * 3600, 7 * 3600)
+                print(f"[{time.strftime('%X')}] 🖱️ Имитация микро-активности пользователя (плавное движение мыши и скролл диалогов)...")
+                perform_in_tab_human_activity(page)
 
             # 0.1 Проверяем плановую ротацию сессии (каждые N часов)
             if SESSION_MAX_LIFETIME_SEC > 0 and (now - session_start_time >= SESSION_MAX_LIFETIME_SEC):
@@ -648,6 +708,12 @@ def main():
             # 2. Запуск браузерной сессии
             result = run_messenger_listener()
             if result == "SLEEP":
+                continue
+            elif result == "DAY_BREAK":
+                print(f"[{time.strftime('%X')}] ☕ Дневной перерыв на {int(DAY_BREAK_DURATION_SEC/60)} мин. Браузер выключен...")
+                time.sleep(DAY_BREAK_DURATION_SEC)
+                print(f"[{time.strftime('%X')}] ☀️ Дневной перерыв завершен. Возврат к работе...")
+                time.sleep(random.uniform(5.0, 20.0))
                 continue
             elif result == "ROTATE":
                 pause = random.uniform(15.0, 45.0)

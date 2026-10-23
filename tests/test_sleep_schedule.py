@@ -37,7 +37,11 @@ def test_seconds_until_wake():
     web_notifier.SLEEP_START_TIME = dtime(2, 0)
     web_notifier.SLEEP_END_TIME = dtime(7, 30)
 
-    # В 05:30 до пробуждения в 07:30 ровно 2 часа (7200 сек)
+    # В 05:30 до пробуждения в 07:30 ровно 2 часа (7200 сек) без джиттера
     dt = datetime(2026, 10, 18, 5, 30, tzinfo=tz)
-    wait_sec = web_notifier.seconds_until_wake(dt)
+    wait_sec = web_notifier.seconds_until_wake(dt, apply_jitter=False)
     assert abs(wait_sec - 7200.0) < 1.0
+
+    # С джиттером должно быть в пределах +- 20 минут
+    wait_sec_jitter = web_notifier.seconds_until_wake(dt, apply_jitter=True)
+    assert 6000.0 <= wait_sec_jitter <= 8400.0

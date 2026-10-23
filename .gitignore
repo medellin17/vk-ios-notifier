@@ -5,6 +5,7 @@
 session.json
 session_test.json
 seen_cache.json
+seen_cache_test.json
 credentials.json
 research/*.jsonl
 research/*.json
